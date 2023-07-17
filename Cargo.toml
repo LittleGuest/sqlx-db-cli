@@ -1,0 +1,15 @@
+[package]
+name = "sqlx-db-cli"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+async-trait = "0.1.68"
+clap = { version = "4.3.3", features = ["derive"] }
+lazy_static = "1.4.0"
+regex = "1.8.4"
+serde = { version = "1.0.164", features = ["derive"] }
+tera = "1.19.0"
+tokio = { version = "1.28.2", features = ["full"] }
+sqlx = { version = "0.6.3", features = ["runtime-tokio-native-tls", "mysql"] }
+heck = "0.4.1"
