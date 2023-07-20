@@ -12,10 +12,8 @@ async_static! {
     static ref DB: Pool<MySql> = pool().await;
 }
 
-async fn pool() -> Pool<MySql> {
-    sqlx::mysql::MySqlPool::connect("mysql://root:123qwe@127.0.0.1/mine")
-        .await
-        .unwrap()
+async fn pool() -> anyhow::Result<Pool<MySql>> {
+    Ok(sqlx::mysql::MySqlPool::connect("mysql://root:123qwe@127.0.0.1/mine").await?)
 }
 
 /// 分页返回封装
@@ -178,7 +176,7 @@ impl {{ struct_name }} {
                 log::error!("{e}");
                 MineError::SqlError
             })?
-            .rows_affected();
+            .last_insert_id();
         Self::fetch_by_id(id).await
     }
 

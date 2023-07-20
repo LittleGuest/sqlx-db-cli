@@ -1,4 +1,4 @@
-//! 代码生成器
+//! sqlx 代码生成器
 //!
 //! 指定数据库和表名，生成对应的struct
 //!
@@ -6,7 +6,6 @@
 
 use std::{
     collections::HashMap,
-    error::Error,
     fmt::Display,
     fs::{self},
     io::Write,
@@ -67,13 +66,17 @@ pub struct TableColumn {
 #[async_trait]
 pub trait Database {
     /// 获取指定表信息
-    async fn tables(&self, pool: &Pool<sqlx::mysql::MySql>, table_names: &[&str]) -> Vec<Table>;
+    async fn tables(
+        &self,
+        pool: &Pool<sqlx::mysql::MySql>,
+        table_names: &[&str],
+    ) -> anyhow::Result<Vec<Table>>;
     /// 获取指定表的字段
     async fn columns(
         &self,
         pool: &Pool<sqlx::mysql::MySql>,
         table_names: &[&str],
-    ) -> Vec<TableColumn>;
+    ) -> anyhow::Result<Vec<TableColumn>>;
 }
 
 /// 驱动类型
@@ -81,6 +84,7 @@ pub trait Database {
 pub enum Driver {
     Sqlite,
     Mysql,
+    Postgres,
 }
 
 /// 代码生成器
@@ -141,14 +145,18 @@ impl Generator {
                 "mysql://{}:{}@{}:{}/{}",
                 self.username, self.password, self.host, self.port, self.database
             ),
+            Driver::Postgres => format!(
+                "postgres://{}:{}@{}:{}/{}",
+                self.username, self.password, self.host, self.port, self.database
+            ),
         }
     }
 
-    pub async fn db(&self) -> Pool<MySql> {
-        sqlx::MySqlPool::connect(&self.driver_url()).await.unwrap()
+    pub async fn db(&self) -> anyhow::Result<Pool<MySql>> {
+        Ok(sqlx::MySqlPool::connect(&self.driver_url()).await?)
     }
 
-    pub async fn run(&mut self) -> Result<(), Box<dyn Error>> {
+    pub async fn run(&mut self) -> anyhow::Result<()> {
         self.deal_path();
         self.generator().await?;
         Ok(())
@@ -167,17 +175,18 @@ impl Generator {
     /// path: 指定生成路径
     /// table_names: 指定生成的表明，为空则生成全部
     /// ```
-    pub async fn generator(&self) -> Result<(), Box<dyn Error>> {
+    pub async fn generator(&self) -> anyhow::Result<()> {
         println!("{self}");
         println!("====== start ======");
 
-        let db = self.db().await;
+        let db = self.db().await?;
 
         // TODO 什么是 trait object?
         let tobj: &dyn Database = {
             match self.driver {
                 Driver::Sqlite => &sqlite::Sqlite,
                 Driver::Mysql => &mysql::Mysql,
+                Driver::Postgres => &postgres::Postgres,
             }
         };
 
@@ -187,13 +196,13 @@ impl Generator {
             .filter(|t| !t.is_empty())
             .collect::<Vec<_>>();
 
-        let tables = tobj.tables(&db, &table_names).await;
+        let tables = tobj.tables(&db, &table_names).await?;
         if tables.is_empty() {
             println!("tables is empty");
             return Ok(());
         }
 
-        let tables_columns = tobj.columns(&db, &table_names).await;
+        let tables_columns = tobj.columns(&db, &table_names).await?;
         if tables_columns.is_empty() {
             return Ok(());
         }

@@ -10,7 +10,7 @@ impl super::Database for Mysql {
         &self,
         pool: &Pool<sqlx::mysql::MySql>,
         table_names: &[&str],
-    ) -> Vec<super::Table> {
+    ) -> anyhow::Result<Vec<super::Table>> {
         let mut sql = r#"
     SELECT
         TABLE_CATALOG as table_catalog,
@@ -52,19 +52,18 @@ impl super::Database for Mysql {
 
         sql.push_str("ORDER BY CREATE_TIME;");
 
-        sqlx::query_as::<_, Table>(&sql)
+        Ok(sqlx::query_as::<_, Table>(&sql)
             .fetch_all(pool)
-            .await
-            .unwrap()
+            .await?
             .into_iter()
             .map(|t| t.into())
-            .collect::<Vec<_>>()
+            .collect::<Vec<_>>())
     }
     async fn columns(
         &self,
         pool: &Pool<sqlx::mysql::MySql>,
         table_names: &[&str],
-    ) -> Vec<super::TableColumn> {
+    ) -> anyhow::Result<Vec<super::TableColumn>> {
         let mut sql = r#"
     SELECT
         TABLE_CATALOG as table_catalog,
@@ -106,13 +105,12 @@ impl super::Database for Mysql {
         }
         sql.push_str("ORDER BY ORDINAL_POSITION;");
 
-        sqlx::query_as::<_, TableColumn>(&sql)
+        Ok(sqlx::query_as::<_, TableColumn>(&sql)
             .fetch_all(pool)
-            .await
-            .unwrap()
+            .await?
             .into_iter()
             .map(|col| col.into())
-            .collect::<Vec<super::TableColumn>>()
+            .collect::<Vec<super::TableColumn>>())
     }
 }
 
@@ -184,7 +182,8 @@ impl From<Table> for super::Table {
 
 impl From<TableColumn> for super::TableColumn {
     fn from(c: TableColumn) -> Self {
-        let ty = mysql_2_rust(&c.column_type.clone().unwrap_or_default().to_uppercase());
+        let ty =
+            mysql_to_rust(&c.column_type.clone().unwrap_or_default().to_uppercase()).to_string();
         Self {
             schema: c.table_schema.clone(),
             table_name: c.table_name.clone(),
@@ -193,8 +192,7 @@ impl From<TableColumn> for super::TableColumn {
             )),
             default: c.column_default.clone(),
             is_nullable: {
-                let ft = ty.clone();
-                if ft.contains("Time") {
+                if ty.contains("Time") {
                     Some("Yes".to_string())
                 } else {
                     c.is_nullable.clone()
@@ -214,37 +212,56 @@ impl From<TableColumn> for super::TableColumn {
     }
 }
 
+/// Rust type             MySQL type(s)
+/// bool                    TINYINT(1), BOOLEAN
+/// i8                      TINYINT
+/// i16                     SMALLINT
+/// i32                     INT
+/// i64                     BIGINT
+/// u8                      TINYINT UNSIGNED
+/// u16                     SMALLINT UNSIGNED
+/// u32                     INT UNSIGNED
+/// u64                     BIGINT UNSIGNED
+/// f32                     FLOAT
+/// f64                     DOUBLE
+/// &str, String            VARCHAR, CHAR, TEXT
+/// &[u8], Vec<u8>          VARBINARY, BINARY, BLOB
+///
+/// time::PrimitiveDateTime DATETIME
+/// time::OffsetDateTime    TIMESTAMP
+/// time::Date              DATE
+/// time::Time              TIME
+///
+/// bigdecimal::BigDecimal  DECIMAL
+///
+/// uuid::Uuid              BYTE(16), VARCHAR, CHAR, TEXT
+/// uuid::fmt::Hyphenated   CHAR(36)
+/// uuid::fmt::Simple       CHAR(32)
+///
+/// serde_json::JsonValue  JSON
+///
 /// Mysql 类型转换为Rust对应类型
-fn mysql_2_rust(t: &str) -> String {
-    match t.to_uppercase().as_str() {
-        "TINYINT(1)" | "BOOL" | "BOOLEAN" => "bool".to_string(),
-        "TINYINT" => "i8".to_string(),
-        "TINYINT UNSIGNED" => "u8".to_string(),
-        "SMALLINT" => "i16".to_string(),
-        "SMALLINT UNSIGNED" => "u16".to_string(),
-        "MEDIUMINT" => "i32".to_string(),
-        "MEDIUMINT UNSIGNED" => "u32".to_string(),
-        "INT" | "INTEGER" => "i32".to_string(),
-        "INT UNSIGNED" | "INTEGER UNSIGNED" => "u32".to_string(),
-        "BIGINT" => "i64".to_string(),
-        "BIGINT UNSIGNED" | "SERIAL" => "u64".to_string(),
-        "DECIMAL" => "bigdecimal::BigDecimal".to_string(),
-        "DOUBLE" | "DOUBLE PRECISION" | "NUMERIC" => "f64".to_string(),
-        "FLOAT" => "f32".to_string(),
-        "BIT" => "u8".to_string(),
-        "DATE" => "time::Date".to_string(),
-        "TIME" => "time::Time".to_string(),
-        "DATETIME" => "time::PrimitiveDateTime".to_string(),
-        "TIMESTAMP" => "time::offsetDateTime".to_string(),
-        "YEAR" => "time::Date".to_string(),
-        "CHAR" | "VARCHAR" | "BINARY" | "VARBINARY" | "TINYBLOB" | "TINYTEXT" | "BLOB" | "TEXT"
-        | "MEDIUMBLOB" | "MEDIUMTEXT" | "LONGBLOB" | "LONGTEXT" | "ENUM" | "SET" => {
-            "String".to_string()
-        }
-        // GEOMETRY, POINT, LINESTRING, POLYGON
-        // MULTIPOINT, MULTILINESTRING, MULTIPOLYGON, GEOMETRYCOLLECTION
-        "JSON" => "serde_json:JsonValue".to_string(),
-
-        _ => "String".to_string(),
+fn mysql_to_rust(ty: &str) -> &str {
+    match ty.to_uppercase().as_str() {
+        "TINYINT(1)" | "BOOLEAN" => "bool",
+        "TINYINT" => "i8",
+        "TINYINT UNSIGNED" | "BIT" => "u8",
+        "SMALLINT" => "i16",
+        "SMALLINT UNSIGNED" => "u16",
+        "INT" | "MEDIUMINT" => "i32",
+        "INT UNSIGNED" | "MEDIUMINT UNSIGNED" => "u32",
+        "BIGINT" => "i64",
+        "BIGINT UNSIGNED" => "u64",
+        "FLOAT" => "f32",
+        "DOUBLE" | "NUMERIC" => "f64",
+        "VARBINARY" | "BINARY" | "BLOB" => "Vec<u8>",
+        "YEAR" => "time::Date",
+        "DATE" => "time::Date",
+        "TIME" => "time::Time",
+        "DATETIME" => "time::PrimitiveDateTime",
+        "TIMESTAMP" => "time::offsetDateTime",
+        "DECIMAL" => "bigdecimal::BigDecimal",
+        "JSON" => "serde_json:JsonValue",
+        _ => "String",
     }
 }

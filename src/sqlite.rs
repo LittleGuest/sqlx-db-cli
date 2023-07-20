@@ -11,7 +11,7 @@ impl super::Database for Sqlite {
         &self,
         pool: &Pool<sqlx::mysql::MySql>,
         table_names: &[&str],
-    ) -> Vec<super::Table> {
+    ) -> anyhow::Result<Vec<super::Table>> {
         let mut sql = r#"
     SELECT type, name, tbl_name, rootpage, sql
     FROM sqlite_master
@@ -22,7 +22,7 @@ impl super::Database for Sqlite {
         if !table_names.is_empty() {
             sql.push_str("AND (1 = 2");
             table_names
-                .into_iter()
+                .iter()
                 .map(|&t| format!("OR name = '{t}'"))
                 .collect::<Vec<_>>()
                 .join(" ");
@@ -31,31 +31,29 @@ impl super::Database for Sqlite {
                 "AND FIND_IN_SET(TABLE_NAME, {})",
                 table_names.join(",")
             ));
-            sql.push_str(")");
+            sql.push(')');
         }
         sql.push_str("ORDER by rootpage;");
 
-        sqlx::query_as::<_, Table>(&sql)
+        Ok(sqlx::query_as::<_, Table>(&sql)
             .fetch_all(pool)
-            .await
-            .unwrap()
+            .await?
             .into_iter()
             .map(|t| t.into())
-            .collect::<Vec<_>>()
+            .collect::<Vec<_>>())
     }
     async fn columns(
         &self,
         pool: &Pool<sqlx::mysql::MySql>,
         table_names: &[&str],
-    ) -> Vec<super::TableColumn> {
+    ) -> anyhow::Result<Vec<super::TableColumn>> {
         let sql = "pragma table_info('#{table_names}');";
 
         let mut cols = vec![];
         for table_name in table_names.iter() {
-            let columns = sqlx::query_as::<_, TableColumn>(&sql)
+            let columns = sqlx::query_as::<_, TableColumn>(sql)
                 .fetch_all(pool)
-                .await
-                .unwrap();
+                .await?;
 
             println!("== {:?}", columns);
             let mut columns = columns
@@ -70,7 +68,7 @@ impl super::Database for Sqlite {
                 .collect::<Vec<_>>();
             cols.append(&mut columns);
         }
-        cols
+        Ok(cols)
     }
 }
 
@@ -143,7 +141,7 @@ impl From<TableColumn> for super::TableColumn {
                 }
             },
             column_type: col.r#type.clone(),
-            field_type: Some(sqlite_2_rust(ty.0.as_str())),
+            field_type: Some(sqlite_to_rust(ty.0.as_str()).into()),
             multi_world: Some(super::multi_world(col.name.unwrap().as_str())),
             ..Default::default()
         }
@@ -168,7 +166,7 @@ impl From<&TableColumn> for super::TableColumn {
                 }
             },
             column_type: col.r#type.clone(),
-            field_type: Some(sqlite_2_rust(ty.0.as_str())),
+            field_type: Some(sqlite_to_rust(ty.0.as_str()).into()),
             multi_world: Some(super::multi_world(col.name.clone().unwrap().as_str())),
             max_length: Some(255),
             comment: col.name.clone(),
@@ -177,13 +175,37 @@ impl From<&TableColumn> for super::TableColumn {
     }
 }
 
-/// FIXME:Sqlite类型转换为Rust类型
-fn sqlite_2_rust(t: &str) -> String {
-    match t.to_lowercase().as_str() {
-        "text" | "char" => "String".to_string(),
-        "int" => "i64".to_string(),
-        "date" | "datetime" => "u64".to_string(),
-        _ => "String".to_string(),
+/// Rust type             SQLite type(s)
+/// bool                    BOOLEAN
+/// i8                      INTEGER
+/// i16                     INTEGER
+/// i32                     INTEGER
+/// i64                     BIGINT, INT8
+/// u8                      INTEGER
+/// u16                     INTEGER
+/// u32                     INTEGER
+/// f32                     REAL
+/// f64                     REAL
+/// &str, String            TEXT
+/// &[u8], Vec<u8>          BLOB
+///
+/// time::PrimitiveDateTime DATETIME
+/// time::OffsetDateTime    DATETIME
+/// time::Date              DATE
+/// time::Time              TIME
+///
+/// Sqlite类型转换为Rust类型
+fn sqlite_to_rust(ty: &str) -> &str {
+    match ty.to_uppercase().as_str() {
+        "BOOLEAN" => "bool",
+        "INTEGER" => "i32",
+        "BIGINT" | "INT8" => "i64",
+        "REAL" => "f64",
+        "BLOB" => "Vec<u8>",
+        "DATE" => "time::Date",
+        "TIME" => "time::Time",
+        "DATETIME" => "time::OffsetDateTime",
+        _ => "String",
     }
 }
 

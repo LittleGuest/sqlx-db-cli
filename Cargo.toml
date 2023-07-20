@@ -13,3 +13,4 @@ tera = "1.19.0"
 tokio = { version = "1.28.2", features = ["full"] }
 sqlx = { version = "0.6.3", features = ["runtime-tokio-native-tls", "mysql"] }
 heck = "0.4.1"
+anyhow = "1.0.72"

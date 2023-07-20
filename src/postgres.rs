@@ -10,7 +10,7 @@ impl super::Database for Postgres {
         &self,
         pool: &Pool<sqlx::mysql::MySql>,
         table_names: &[&str],
-    ) -> Vec<super::Table> {
+    ) -> anyhow::Result<Vec<super::Table>> {
         let mut sql = r#"
     SELECT
         TABLE_CATALOG as table_catalog,
@@ -52,19 +52,18 @@ impl super::Database for Postgres {
 
         sql.push_str("ORDER BY CREATE_TIME;");
 
-        sqlx::query_as::<_, Table>(&sql)
+        Ok(sqlx::query_as::<_, Table>(&sql)
             .fetch_all(pool)
-            .await
-            .unwrap()
+            .await?
             .into_iter()
             .map(|t| t.into())
-            .collect::<Vec<_>>()
+            .collect::<Vec<_>>())
     }
     async fn columns(
         &self,
         pool: &Pool<sqlx::mysql::MySql>,
         table_names: &[&str],
-    ) -> Vec<super::TableColumn> {
+    ) -> anyhow::Result<Vec<super::TableColumn>> {
         let mut sql = r#"
     SELECT
         TABLE_CATALOG as table_catalog,
@@ -106,13 +105,12 @@ impl super::Database for Postgres {
         }
         sql.push_str("ORDER BY ORDINAL_POSITION;");
 
-        sqlx::query_as::<_, TableColumn>(&sql)
+        Ok(sqlx::query_as::<_, TableColumn>(&sql)
             .fetch_all(pool)
-            .await
-            .unwrap()
+            .await?
             .into_iter()
             .map(|col| col.into())
-            .collect::<Vec<super::TableColumn>>()
+            .collect::<Vec<super::TableColumn>>())
     }
 }
 
@@ -184,7 +182,7 @@ impl From<Table> for super::Table {
 
 impl From<TableColumn> for super::TableColumn {
     fn from(c: TableColumn) -> Self {
-        let ty = to_rust(&c.column_type.clone().unwrap_or_default().to_uppercase());
+        let ty = pg_to_rust(&c.column_type.clone().unwrap_or_default().to_uppercase()).to_string();
         Self {
             schema: c.table_schema.clone(),
             table_name: c.table_name.clone(),
@@ -193,8 +191,7 @@ impl From<TableColumn> for super::TableColumn {
             )),
             default: c.column_default.clone(),
             is_nullable: {
-                let ft = ty.clone();
-                if ft.contains("Time") {
+                if ty.contains("Time") {
                     Some("Yes".to_string())
                 } else {
                     c.is_nullable.clone()
@@ -214,37 +211,73 @@ impl From<TableColumn> for super::TableColumn {
     }
 }
 
+/// Rust type            Postgres type(s)
+/// bool                    BOOL
+/// i8                      “CHAR”
+/// i16                     SMALLINT, SMALLSERIAL, INT2
+/// i32                     INT, SERIAL, INT4
+/// i64                     BIGINT, BIGSERIAL, INT8
+/// f32                     REAL, FLOAT4
+/// f64                     DOUBLE PRECISION, FLOAT8
+/// &str, String            VARCHAR, CHAR(N), TEXT, NAME
+/// &[u8], Vec<u8>          BYTEA
+/// ()                      VOID
+/// PgInterval              INTERVAL
+/// PgRange<T>              INT8RANGE, INT4RANGE, TSRANGE, TSTZRANGE, DATERANGE, NUMRANGE
+/// PgMoney                 MONEY
+/// PgLTree                 LTREE
+/// PgLQuery                LQUERY
+///
+/// bigdecimal::BigDecimal  NUMERIC
+///
+/// time::PrimitiveDateTime TIMESTAMP
+/// time::OffsetDateTime    TIMESTAMPTZ
+/// time::Date              DATE
+/// time::Time              TIME
+/// [PgTimeTz]              TIMETZ
+///
+/// uuid::Uuid              UUID
+///
+/// ipnetwork::IpNetwork    INET, CIDR
+/// std::net::IpAddr        INET, CIDR
+///
+/// mac_address::MacAddress MACADDR
+///
+/// bit_vec::BitVec         BIT, VARBIT
+///
+/// serde_json::Value       JSON, JSONB
+///
 /// PostgreSQL 类型转换为Rust对应类型
-fn to_rust(t: &str) -> String {
-    match t.to_uppercase().as_str() {
-        "TINYINT(1)" | "BOOL" | "BOOLEAN" => "bool".to_string(),
-        "TINYINT" => "i8".to_string(),
-        "TINYINT UNSIGNED" => "u8".to_string(),
-        "SMALLINT" => "i16".to_string(),
-        "SMALLINT UNSIGNED" => "u16".to_string(),
-        "MEDIUMINT" => "i32".to_string(),
-        "MEDIUMINT UNSIGNED" => "u32".to_string(),
-        "INT" | "INTEGER" => "i32".to_string(),
-        "INT UNSIGNED" | "INTEGER UNSIGNED" => "u32".to_string(),
-        "BIGINT" => "i64".to_string(),
-        "BIGINT UNSIGNED" | "SERIAL" => "u64".to_string(),
-        "DECIMAL" => "bigdecimal::BigDecimal".to_string(),
-        "DOUBLE" | "DOUBLE PRECISION" | "NUMERIC" => "f64".to_string(),
-        "FLOAT" => "f32".to_string(),
-        "BIT" => "u8".to_string(),
-        "DATE" => "time::Date".to_string(),
-        "TIME" => "time::Time".to_string(),
-        "DATETIME" => "time::PrimitiveDateTime".to_string(),
-        "TIMESTAMP" => "time::offsetDateTime".to_string(),
-        "YEAR" => "time::Date".to_string(),
-        "CHAR" | "VARCHAR" | "BINARY" | "VARBINARY" | "TINYBLOB" | "TINYTEXT" | "BLOB" | "TEXT"
-        | "MEDIUMBLOB" | "MEDIUMTEXT" | "LONGBLOB" | "LONGTEXT" | "ENUM" | "SET" => {
-            "String".to_string()
+fn pg_to_rust(ty: &str) -> &str {
+    match ty.to_uppercase().as_str() {
+        "BOOL" => "bool",
+        "CHAR" => "i8",
+        "SMALLINT" | "SMALLSERIAL" | "INT2" => "i16",
+        "INT" | "SERIAL" | "INT4" => "i32",
+        "BIGINT" | "BIGSERIAL" | "INT8" => "i64",
+        "REAL" | "FLOAT4" => "f32",
+        "DOUBLE PRECISION" | "FLOAT8" => "f64",
+        "BYTEA" => "Vec<u8>",
+        "VOID" => "()",
+        "INTERVAL" => "sqlx_postgres::types::PgInterval",
+        "INT8RANGE" | "INT4RANGE" | "TSRANGE" | "TSTZRANGE" | "DATERANGE" | "NUMRANGE" => {
+            "sqlx_postgres::types::PgRange<T> "
         }
-        // GEOMETRY, POINT, LINESTRING, POLYGON
-        // MULTIPOINT, MULTILINESTRING, MULTIPOLYGON, GEOMETRYCOLLECTION
-        "JSON" => "serde_json:JsonValue".to_string(),
-
-        _ => "String".to_string(),
+        "MONEY" => "sqlx_postgres::types::PgMoney",
+        "LTREE" => "sqlx_postgres::types::PgLTree",
+        "LQUERY" => "sqlx_postgres::types::PgLQuery",
+        "YEAR" => "time::Date",
+        "DATE" => "time::Date",
+        "TIME" => "time::Time",
+        "TIMESTAMP" => "time::PrimitiveDateTime",
+        "TIMESTAMPTZ" => "time::OffsetDateTime",
+        "TIMETZ" => "sqlx_postgres::types::PgTimeTz",
+        "NUMERIC" => "bigdecimal::BigDecimal",
+        "JSON" | "JSONB" => "serde_json:JsonValue",
+        "UUID" => "uuid::Uuid",
+        "INET" | "CIDR" => "std::net::IpAddr",
+        "MACADDR" => "mac_address::MacAddress",
+        "BIT" | "VARBIT" => "bit_vec::BitVec",
+        _ => "String",
     }
 }
