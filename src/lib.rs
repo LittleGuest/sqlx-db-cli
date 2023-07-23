@@ -40,9 +40,9 @@ lazy_static! {
 
 #[derive(Serialize, Deserialize, Default, Debug)]
 pub struct Table {
-    pub schema: Option<String>,
-    pub name: Option<String>,
-    pub comment: Option<String>,
+    pub schema: String,
+    pub name: String,
+    pub comment: String,
 }
 
 #[derive(Serialize, Deserialize, Default, Debug, Clone)]
@@ -88,6 +88,10 @@ pub enum Driver {
 }
 
 /// 代码生成器
+/// Driver::Sqlite      sqlite://test.sqlite
+/// Driver::Mysql       mysql://root:root@localhost:3306/test
+/// Driver::Postgres    postgres://root:root@localhost:5432/test
+///
 #[derive(Parser, Debug)]
 #[command(author, version, about,long_about = None)]
 pub struct Generator {
@@ -95,16 +99,16 @@ pub struct Generator {
     #[command(subcommand)]
     pub driver: Driver,
     /// 数据库账号
-    #[clap(short, default_value = "root")]
+    #[clap(short)]
     pub username: String,
     /// 数据库密码
-    #[clap(short, default_value = "root")]
+    #[clap(short)]
     pub password: String,
     /// 数据库地址
-    #[clap(short('H'), default_value = "localhost")]
+    #[clap(short('H'))]
     pub host: String,
     /// 数据库端口号
-    #[clap(short('P'), default_value_t = 3306)]
+    #[clap(short('P'))]
     pub port: u16,
     /// 指定的数据库名称
     #[clap(short('D'))]
@@ -221,8 +225,8 @@ impl Generator {
             }
             Driver::Postgres => {
                 let pool = sqlx::PgPool::connect(&self.driver_url()).await?;
-                let tables = postgres::tables(&pool, &table_names).await?;
-                let tables_columns = postgres::columns(&pool, &table_names).await?;
+                let tables = postgres::tables(&self.database, &pool, &table_names).await?;
+                let tables_columns = postgres::columns(&self.database, &pool, &table_names).await?;
                 (tables, tables_columns)
             }
         };
@@ -237,10 +241,8 @@ impl Generator {
         }
 
         // 将tables转换为map，K：表名，V：表信息
-        let table_map: HashMap<String, Table> = tables
-            .into_iter()
-            .map(|t| (t.name.to_owned().unwrap(), t))
-            .collect();
+        let table_map: HashMap<String, Table> =
+            tables.into_iter().map(|t| (t.name.to_owned(), t)).collect();
 
         // 组装表信息和表列信息，K：表名，V：表列信息
         // FIXME：有没有办法直接将Vec分组，类似Java的Collectors.groupby

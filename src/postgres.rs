@@ -116,49 +116,15 @@ pub struct Postgres;
 // }
 
 pub async fn tables(
+    database: &str,
     pool: &Pool<sqlx::Postgres>,
     table_names: &[&str],
 ) -> anyhow::Result<Vec<super::Table>> {
-    let mut sql = r#"
-    SELECT
-        TABLE_CATALOG as table_catalog,
-        TABLE_SCHEMA as table_schema,
-        TABLE_NAME as table_name,
-        TABLE_TYPE as table_type,
-        `ENGINE` as engine,
-        VERSION as version,
-        ROW_FORMAT as row_format,
-        TABLE_ROWS as table_rows,
-        AVG_ROW_LENGTH as avg_row_length,
-        DATA_LENGTH as data_length,
-        MAX_DATA_LENGTH as max_data_length,
-        INDEX_LENGTH as index_length,
-        DATA_FREE as data_free,
-        AUTO_INCREMENT as auto_increment,
-        CREATE_TIME as create_time,
-        UPDATE_TIME as update_time,
-        CHECK_TIME as check_time,
-        TABLE_COLLATION as table_collation,
-        `CHECKSUM` as checksum,
-        CREATE_OPTIONS as create_options,
-        TABLE_COMMENT as table_comment
-    FROM
-        information_schema.`TABLES`
-    WHERE
-        TABLE_SCHEMA = (
-        SELECT
-            DATABASE ())
-        "#
-    .to_string();
+    let mut sql = format!("SELECT table_catalog, table_schema, table_name FROM information_schema.tables WHERE table_catalog = '{database}' and table_schema = 'public'");
 
     if !table_names.is_empty() {
-        sql.push_str(&format!(
-            "AND FIND_IN_SET(TABLE_NAME, '{}')",
-            table_names.join(",")
-        ));
+        sql.push_str(&format!("and table_name in ('{}')", table_names.join(",")));
     }
-
-    sql.push_str("ORDER BY CREATE_TIME;");
 
     Ok(sqlx::query_as::<_, Table>(&sql)
         .fetch_all(pool)
@@ -169,49 +135,15 @@ pub async fn tables(
 }
 
 pub async fn columns(
+    database: &str,
     pool: &Pool<sqlx::Postgres>,
     table_names: &[&str],
 ) -> anyhow::Result<Vec<super::Column>> {
-    let mut sql = r#"
-    SELECT
-        TABLE_CATALOG as table_catalog,
-        TABLE_SCHEMA as table_schema,
-        TABLE_NAME as table_name,
-        COLUMN_NAME as column_name,
-        ORDINAL_POSITION as ordinal_position,
-        COLUMN_DEFAULT as column_default,
-        IS_NULLABLE as is_nullable,
-        DATA_TYPE as data_type,
-        CHARACTER_MAXIMUM_LENGTH character_maximum_length,
-        CHARACTER_OCTET_LENGTH as character_octet_length,
-        NUMERIC_PRECISION as numeric_precision,
-        NUMERIC_SCALE as numeric_scale,
-        DATETIME_PRECISION as datetime_precision,
-        CHARACTER_SET_NAME as character_set_name,
-        COLLATION_NAME as collation_name,
-        COLUMN_TYPE as column_type,
-        COLUMN_KEY as column_key,
-        EXTRA as extra,
-        `PRIVILEGES` as privileges,
-        COLUMN_COMMENT column_comment,
-        GENERATION_EXPRESSION as generation_expression,
-        SRS_ID as srs_id
-    FROM
-        information_schema.COLUMNS
-    WHERE
-        TABLE_SCHEMA = (
-        SELECT
-            DATABASE ())
-        "#
-    .to_string();
+    let mut sql = format!("select table_catalog, table_schema, table_name, column_name, ordinal_position, column_default, is_nullable, data_type, character_maximum_length from information_schema.columns where table_catalog = '{database}' and table_schema = 'public'");
 
     if !table_names.is_empty() {
-        sql.push_str(&format!(
-            "AND FIND_IN_SET(TABLE_NAME, '{}')",
-            table_names.join(",")
-        ));
+        sql.push_str(&format!("and table_name in ('{}')", table_names.join(",")));
     }
-    sql.push_str("ORDER BY ORDINAL_POSITION;");
 
     Ok(sqlx::query_as::<_, TableColumn>(&sql)
         .fetch_all(pool)
@@ -223,41 +155,37 @@ pub async fn columns(
 
 #[derive(Default, Debug, Serialize, Deserialize, FromRow)]
 struct Table {
+    table_catalog: String,
     table_schema: String,
     table_name: String,
-    table_comment: String,
 }
 
 #[derive(Default, Debug, Serialize, Deserialize, FromRow)]
 struct TableColumn {
+    table_catalog: String,
     table_schema: String,
     table_name: String,
     column_name: String,
-    /// 字段顺序
-    ordinal_position: Option<i64>,
-    /// 默认值
+    ordinal_position: i32,
     column_default: Option<String>,
-    /// 是否允许为null
     is_nullable: String,
-    data_type: Option<String>,
-    character_maximum_length: Option<i64>,
-    column_type: String,
-    column_comment: String,
+    data_type: String,
+    character_maximum_length: Option<i32>,
 }
 
 impl From<Table> for super::Table {
     fn from(t: Table) -> Self {
         Self {
-            schema: Some(t.table_schema),
-            name: Some(t.table_name),
-            comment: Some(t.table_comment),
+            schema: t.table_schema,
+            name: t.table_name.clone(),
+            comment: t.table_name,
         }
     }
 }
 
 impl From<TableColumn> for super::Column {
     fn from(c: TableColumn) -> Self {
-        let ty = pg_to_rust(&c.column_type.clone().to_uppercase()).to_string();
+        let ty = pg_to_rust(&c.data_type.clone().to_uppercase()).to_string();
         Self {
             schema: Some(c.table_schema.clone()),
             table_name: Some(c.table_name.clone()),
@@ -270,11 +198,17 @@ impl From<TableColumn> for super::Column {
                     Some(c.is_nullable)
                 }
             },
-            column_type: Some(c.column_type),
-            comment: Some(c.column_comment.clone()),
+            column_type: Some(c.data_type),
+            comment: Some("".to_string()),
             field_type: Some(ty),
             multi_world: Some(c.column_name.clone().contains(|c| c == '_' || c == '-')),
-            max_length: c.character_maximum_length,
+            max_length: {
+                if let Some(l) = c.character_maximum_length {
+                    Some(l as i64)
+                } else {
+                    Some(50)
+                }
+            },
         }
     }
 }

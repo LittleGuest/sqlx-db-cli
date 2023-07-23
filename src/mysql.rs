@@ -176,9 +176,9 @@ struct TableColumn {
 impl From<Table> for super::Table {
     fn from(t: Table) -> Self {
         Self {
-            schema: Some(t.table_schema),
-            name: Some(t.table_name),
-            comment: Some(t.table_comment),
+            schema: t.table_schema,
+            name: t.table_name,
+            comment: t.table_comment,
         }
     }
 }

@@ -118,11 +118,11 @@ pub async fn columns(
 #[derive(Default, Debug, Serialize, Deserialize, FromRow)]
 struct Table {
     /// 项目的类型：table，index，view，trigger
-    r#type: Option<String>,
+    r#type: String,
     /// 项目的名称
-    name: Option<String>,
+    name: String,
     /// 所从属的表名，如索引所在的表名
-    tbl_name: Option<String>,
+    tbl_name: String,
     /// 项目在数据库页中存储的编号
     rootpage: Option<i64>,
     /// SQL语句
