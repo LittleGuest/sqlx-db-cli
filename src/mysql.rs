@@ -1,102 +1,5 @@
-use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, Pool};
-
-pub struct Mysql;
-
-// #[async_trait]
-// impl super::Database for Mysql {
-//     type DB = sqlx::mysql::MySql;
-
-//     async fn tables(
-//         &self,
-//         pool: &Pool<Self::DB>,
-//         table_names: &[&str],
-//     ) -> anyhow::Result<Vec<super::Table>> {
-//         let mut sql = "SELECT TABLE_SCHEMA table_schema, TABLE_NAME table_name, TABLE_COMMENT table_comment FROM information_schema.`TABLES` WHERE TABLE_SCHEMA = ( SELECT DATABASE ())"
-//         .to_string();
-
-//         if !table_names.is_empty() {
-//             sql.push_str(&format!(
-//                 "AND FIND_IN_SET(TABLE_NAME, '{}')",
-//                 table_names.join(",")
-//             ));
-//         }
-
-//         Ok(sqlx::query_as::<_, Table>(&sql)
-//             .fetch_all(pool)
-//             .await?
-//             .into_iter()
-//             .map(|t| t.into())
-//             .collect::<Vec<_>>())
-//     }
-//     async fn columns(
-//         &self,
-//         pool: &Pool<Self::DB>,
-//         table_names: &[&str],
-//     ) -> anyhow::Result<Vec<super::Column>> {
-//         let mut sql = r#"SELECT TABLE_SCHEMA table_schema, TABLE_NAME table_name, COLUMN_NAME column_name, ORDINAL_POSITION ordinal_position, COLUMN_DEFAULT column_default, IS_NULLABLE is_nullable, DATA_TYPE data_type, CHARACTER_MAXIMUM_LENGTH character_maximum_length, COLUMN_TYPE column_type, COLUMN_COMMENT column_comment FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = ( SELECT DATABASE ())"#
-//         .to_string();
-
-//         if !table_names.is_empty() {
-//             sql.push_str(&format!(
-//                 "AND FIND_IN_SET(TABLE_NAME, '{}')",
-//                 table_names.join(",")
-//             ));
-//         }
-
-//         Ok(sqlx::query_as::<_, TableColumn>(&sql)
-//             .fetch_all(pool)
-//             .await?
-//             .into_iter()
-//             .map(|col| col.into())
-//             .collect::<Vec<super::Column>>())
-//     }
-// }
-
-pub async fn tables(
-    pool: &Pool<sqlx::MySql>,
-    table_names: &[&str],
-) -> anyhow::Result<Vec<super::Table>> {
-    let mut sql = "SELECT TABLE_SCHEMA table_schema, TABLE_NAME table_name, TABLE_COMMENT table_comment FROM information_schema.`TABLES` WHERE TABLE_SCHEMA = ( SELECT DATABASE ())"
-        .to_string();
-
-    if !table_names.is_empty() {
-        sql.push_str(&format!(
-            "AND FIND_IN_SET(TABLE_NAME, '{}')",
-            table_names.join(",")
-        ));
-    }
-
-    Ok(sqlx::query_as::<_, Table>(&sql)
-        .fetch_all(pool)
-        .await?
-        .into_iter()
-        .map(|t| t.into())
-        .collect::<Vec<_>>())
-}
-
-pub async fn columns(
-    pool: &Pool<sqlx::MySql>,
-    table_names: &[&str],
-) -> anyhow::Result<Vec<super::Column>> {
-    let mut sql = r#"SELECT TABLE_SCHEMA table_schema, TABLE_NAME table_name, COLUMN_NAME column_name, ORDINAL_POSITION ordinal_position, COLUMN_DEFAULT column_default, IS_NULLABLE is_nullable, DATA_TYPE data_type, CHARACTER_MAXIMUM_LENGTH character_maximum_length, COLUMN_TYPE column_type, COLUMN_COMMENT column_comment FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = ( SELECT DATABASE ())"#
-        .to_string();
-
-    if !table_names.is_empty() {
-        sql.push_str(&format!(
-            "AND FIND_IN_SET(TABLE_NAME, '{}')",
-            table_names.join(",")
-        ));
-    }
-
-    Ok(sqlx::query_as::<_, TableColumn>(&sql)
-        .fetch_all(pool)
-        .await?
-        .into_iter()
-        .map(|col| col.into())
-        .collect::<Vec<super::Column>>())
-}
 
 /// +-----------------+--------------------------------------------------------------------+------+-----+---------+-------+
 /// | Field           | Type                                                               | Null | Key | Default | Extra |
@@ -185,7 +88,7 @@ impl From<Table> for super::Table {
 
 impl From<TableColumn> for super::Column {
     fn from(c: TableColumn) -> Self {
-        let ty = mysql_to_rust(&c.column_type.clone().to_uppercase()).to_string();
+        let ty = t2t(&c.column_type.clone().to_uppercase()).to_string();
         Self {
             schema: Some(c.table_schema.clone()),
             table_name: Some(c.table_name.clone()),
@@ -236,7 +139,7 @@ impl From<TableColumn> for super::Column {
 /// serde_json::JsonValue  JSON
 ///
 /// Mysql 类型转换为Rust对应类型
-fn mysql_to_rust(ty: &str) -> &str {
+fn t2t(ty: &str) -> &str {
     match ty.to_uppercase().as_str() {
         "TINYINT(1)" | "BOOLEAN" => "bool",
         "TINYINT" => "i8",
@@ -259,4 +162,48 @@ fn mysql_to_rust(ty: &str) -> &str {
         "JSON" => "serde_json:JsonValue",
         _ => "String",
     }
+}
+
+pub async fn tables(
+    pool: &Pool<sqlx::MySql>,
+    table_names: &[&str],
+) -> anyhow::Result<Vec<super::Table>> {
+    let mut sql = "SELECT TABLE_SCHEMA table_schema, TABLE_NAME table_name, TABLE_COMMENT table_comment FROM information_schema.`TABLES` WHERE TABLE_SCHEMA = ( SELECT DATABASE ())"
+        .to_string();
+
+    if !table_names.is_empty() {
+        sql.push_str(&format!(
+            "AND FIND_IN_SET(TABLE_NAME, '{}')",
+            table_names.join(",")
+        ));
+    }
+
+    Ok(sqlx::query_as::<_, Table>(&sql)
+        .fetch_all(pool)
+        .await?
+        .into_iter()
+        .map(|t| t.into())
+        .collect::<Vec<_>>())
+}
+
+pub async fn columns(
+    pool: &Pool<sqlx::MySql>,
+    table_names: &[&str],
+) -> anyhow::Result<Vec<super::Column>> {
+    let mut sql = r#"SELECT TABLE_SCHEMA table_schema, TABLE_NAME table_name, COLUMN_NAME column_name, ORDINAL_POSITION ordinal_position, COLUMN_DEFAULT column_default, IS_NULLABLE is_nullable, DATA_TYPE data_type, CHARACTER_MAXIMUM_LENGTH character_maximum_length, COLUMN_TYPE column_type, COLUMN_COMMENT column_comment FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = ( SELECT DATABASE ())"#
+        .to_string();
+
+    if !table_names.is_empty() {
+        sql.push_str(&format!(
+            "AND FIND_IN_SET(TABLE_NAME, '{}')",
+            table_names.join(",")
+        ));
+    }
+
+    Ok(sqlx::query_as::<_, TableColumn>(&sql)
+        .fetch_all(pool)
+        .await?
+        .into_iter()
+        .map(|col| col.into())
+        .collect::<Vec<super::Column>>())
 }

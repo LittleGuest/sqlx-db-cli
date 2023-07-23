@@ -1,20 +1,89 @@
+/// error.rs
+pub const ERROR_TEMPLATE: &str = r#"
+//! 全局异常
+
+#[derive(Debug, thiserror::Error)]
+pub enum MineError {
+    #[error("{0}")]
+    E(String),
+    #[error("序列化错误")]
+    SerializeError,
+    #[error("验证码错误")]
+    CaptchaError,
+    #[error("验证码失效")]
+    CaptchaExpireError,
+    #[error("账号或密码错误")]
+    UsernameOrPasswordError,
+    #[error("用户不存在")]
+    UserNotFound,
+    #[error("{0}")]
+    JwtError(&'static str),
+    #[error("服务器异常 : {0}")]
+    ServerError(&'static str),
+    #[error("SQL错误")]
+    SqlError,
+    #[error("未知错误")]
+    Unknown,
+
+    // #[error(transparent)]
+    // PoemError(#[from] poem::Error),
+    #[error("参数校验错误: {0}")]
+    ValidationError(&'static str),
+    // #[error(transparent)]
+    // AnyhowError(#[from] anyhow::Error),
+}
+"#;
+
+/// result.rs
+pub const RESULT_TEMPLATE: &str = r#"
+use crate::error::MineError;
+
+pub type MineResult<T, E = MineError> = std::result::Result<T, E>;
+"#;
+
 /// mod.rs 文件模板
 pub const MOD_TEMPLATE: &str = r#"
 use async_static::async_static;
+use serde::{Deserialize, Serialize};
+
+{% if driver == 'Mysql' %}
 use sqlx::{MySql, Pool};
+{% elif driver == 'Postgres' %}
+use sqlx::{Postgres, Pool}; 
+{% elif driver == 'Sqlite' %}
+use sqlx::{Sqlite, Pool};
+{% endif %}
+
 
 {% for table_name, _ in table_names %}
-mod {{table_name}};
-pub use {{table_name}}::*;
+mod {{ table_name }};
+pub use {{ table_name }}::*;
 {% endfor %}
 
 async_static! {
+{% if driver == 'Mysql' %}
     static ref DB: Pool<MySql> = pool().await;
+{% elif driver == 'Postgres' %}
+    static ref DB: Pool<Postgres> = pool().await;    
+{% elif driver == 'Sqlite' %}
+    static ref DB: Pool<Sqlite> = pool().await;    
+{% endif %}
 }
 
-async fn pool() -> anyhow::Result<Pool<MySql>> {
-    Ok(sqlx::mysql::MySqlPool::connect("mysql://root:123qwe@127.0.0.1/mine").await?)
+{% if driver == 'Mysql' %}
+async fn pool() -> Pool<MySql> {
+    sqlx::MySqlPool::connect("{{ driver_url }}").await.unwrap()
 }
+{% elif driver == 'Postgres' %}
+async fn pool() -> Pool<Postgres> {
+    sqlx::PgPool::connect("{{ driver_url }}").await.unwrap()
+}
+{% elif driver == 'Sqlite' %}
+async fn pool() -> Pool<Sqlite> {
+    sqlx::SqlitePool::connect("{{ driver_url }}").await.unwrap()
+}
+{% endif %}
+
 
 /// 分页返回封装
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -70,7 +139,7 @@ where
 }
 "#;
 
-/// 模型模板
+/// model模板
 pub const MODEL_TEMPLATE: &str = r#"
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
@@ -166,7 +235,6 @@ impl {{ struct_name }} {
             "{% for column in columns %}?,{% endfor %}".trim_end_matches(',')
         );
         let id = sqlx::query(&sql)
-            .bind(&self.id)
             {% if has_columns %}{% for column in columns %}
             .bind(&self.{{column.name}})
             {% endfor %}{% endif %}
@@ -290,7 +358,7 @@ impl {{ struct_name }} {
     Validate,
 )]
 pub struct {{ struct_name }}Req { 
-    pub time_type: Option<>,
+    pub time_type: Option<u8>,
     /// 开始时间
     pub start_at: Option<u64>,
     /// 结束时间

@@ -1,118 +1,6 @@
-use async_trait::async_trait;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, Pool};
-
-pub struct Sqlite;
-
-// #[async_trait]
-// impl super::Database for Sqlite {
-//     type DB = sqlx::Sqlite;
-
-//     async fn tables(
-//         &self,
-//         pool: &Pool<Self::DB>,
-//         table_names: &[&str],
-//     ) -> anyhow::Result<Vec<super::Table>> {
-//         let mut sql =
-//             "SELECT type, name, tbl_name, rootpage, sql FROM sqlite_master WHERE type = 'table'"
-//                 .to_string();
-
-//         if !table_names.is_empty() {
-//             let table_names = table_names
-//                 .iter()
-//                 .map(|&t| format!("'{t}'"))
-//                 .collect::<Vec<_>>()
-//                 .join(",");
-//             sql.push_str(&format!(" AND name in({table_names}) "));
-//         }
-
-//         Ok(sqlx::query_as::<_, Table>(&sql)
-//             .fetch_all(pool)
-//             .await?
-//             .into_iter()
-//             .map(|t| t.into())
-//             .collect::<Vec<_>>())
-//     }
-//     async fn columns(
-//         &self,
-//         pool: &Pool<Self::DB>,
-//         table_names: &[&str],
-//     ) -> anyhow::Result<Vec<super::Column>> {
-//         let sql = "pragma table_info('#{table_names}');";
-
-//         let mut cols = vec![];
-//         for table_name in table_names.iter() {
-//             let columns = sqlx::query_as::<_, TableColumn>(sql)
-//                 .fetch_all(pool)
-//                 .await?;
-
-//             let mut columns = columns
-//                 .iter()
-//                 .map(|c| c.into())
-//                 .collect::<Vec<super::Column>>()
-//                 .iter_mut()
-//                 .map(|c| {
-//                     c.table_name = Some(table_name.to_string());
-//                     c.to_owned()
-//                 })
-//                 .collect::<Vec<_>>();
-//             cols.append(&mut columns);
-//         }
-//         Ok(cols)
-//     }
-// }
-
-pub async fn tables(
-    pool: &Pool<sqlx::Sqlite>,
-    table_names: &[&str],
-) -> anyhow::Result<Vec<super::Table>> {
-    let mut sql =
-        "SELECT type, name, tbl_name, rootpage, sql FROM sqlite_master WHERE type = 'table'"
-            .to_string();
-
-    if !table_names.is_empty() {
-        let table_names = table_names
-            .iter()
-            .map(|&t| format!("'{t}'"))
-            .collect::<Vec<_>>()
-            .join(",");
-        sql.push_str(&format!(" AND name in({table_names}) "));
-    }
-
-    Ok(sqlx::query_as::<_, Table>(&sql)
-        .fetch_all(pool)
-        .await?
-        .into_iter()
-        .map(|t| t.into())
-        .collect::<Vec<_>>())
-}
-
-pub async fn columns(
-    pool: &Pool<sqlx::Sqlite>,
-    table_names: &[&str],
-) -> anyhow::Result<Vec<super::Column>> {
-    let mut cols = vec![];
-    for table_name in table_names.iter() {
-        let columns =
-            sqlx::query_as::<_, TableColumn>(&format!("pragma table_info('{}');", table_name))
-                .fetch_all(pool)
-                .await?;
-
-        let mut columns = columns
-            .iter()
-            .map(|c| c.into())
-            .collect::<Vec<super::Column>>()
-            .iter_mut()
-            .map(|c| {
-                c.table_name = Some(table_name.to_string());
-                c.to_owned()
-            })
-            .collect::<Vec<_>>();
-        cols.append(&mut columns);
-    }
-    Ok(cols)
-}
 
 /// 表信息来自 sqlite_master
 #[derive(Default, Debug, Serialize, Deserialize, FromRow)]
@@ -172,7 +60,7 @@ impl From<&TableColumn> for super::Column {
                 }
             },
             column_type: col.r#type.clone(),
-            field_type: Some(sqlite_to_rust(ty.0.as_str()).into()),
+            field_type: Some(t2t(ty.0.as_str()).into()),
             multi_world: Some(super::multi_world(col.name.clone().as_str())),
             max_length: Some(255),
             comment: Some(col.name.clone()),
@@ -201,7 +89,7 @@ impl From<&TableColumn> for super::Column {
 /// time::Time              TIME
 ///
 /// Sqlite类型转换为Rust类型
-fn sqlite_to_rust(ty: &str) -> &str {
+fn t2t(ty: &str) -> &str {
     match ty.to_uppercase().as_str() {
         "BOOLEAN" => "bool",
         "INTEGER" => "i32",
@@ -229,4 +117,55 @@ fn sqlite_type(t: &str) -> (String, Option<u16>) {
     } else {
         (t.to_string(), None)
     }
+}
+
+pub async fn tables(
+    pool: &Pool<sqlx::Sqlite>,
+    table_names: &[&str],
+) -> anyhow::Result<Vec<super::Table>> {
+    let mut sql =
+        "SELECT type, name, tbl_name, rootpage, sql FROM sqlite_master WHERE type = 'table'"
+            .to_string();
+
+    if !table_names.is_empty() {
+        let table_names = table_names
+            .iter()
+            .map(|&t| format!("'{t}'"))
+            .collect::<Vec<_>>()
+            .join(",");
+        sql.push_str(&format!(" AND name in({table_names}) "));
+    }
+
+    Ok(sqlx::query_as::<_, Table>(&sql)
+        .fetch_all(pool)
+        .await?
+        .into_iter()
+        .map(|t| t.into())
+        .collect::<Vec<_>>())
+}
+
+pub async fn columns(
+    pool: &Pool<sqlx::Sqlite>,
+    table_names: &[&str],
+) -> anyhow::Result<Vec<super::Column>> {
+    let mut cols = vec![];
+    for table_name in table_names.iter() {
+        let columns =
+            sqlx::query_as::<_, TableColumn>(&format!("pragma table_info('{}');", table_name))
+                .fetch_all(pool)
+                .await?;
+
+        let mut columns = columns
+            .iter()
+            .map(|c| c.into())
+            .collect::<Vec<super::Column>>()
+            .iter_mut()
+            .map(|c| {
+                c.table_name = Some(table_name.to_string());
+                c.to_owned()
+            })
+            .collect::<Vec<_>>();
+        cols.append(&mut columns);
+    }
+    Ok(cols)
 }

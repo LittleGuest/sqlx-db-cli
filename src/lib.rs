@@ -11,13 +11,13 @@ use std::{
     io::Write,
 };
 
-use async_trait::async_trait;
 use clap::{Parser, Subcommand};
 use heck::ToUpperCamelCase;
 use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
-use sqlx::{Any, MySql, Pool};
 use template::{MODEL_TEMPLATE, MOD_TEMPLATE};
+
+use crate::template::{ERROR_TEMPLATE, RESULT_TEMPLATE};
 
 mod mysql;
 mod postgres;
@@ -61,36 +61,18 @@ pub struct Column {
     pub multi_world: Option<bool>,
 }
 
-// #[async_trait]
-// pub trait Database {
-//     type DB: sqlx::Database;
-//     /// 获取指定表信息
-//     async fn tables(
-//         &self,
-//         pool: &Pool<Self::DB>,
-//         table_names: &[&str],
-//     ) -> anyhow::Result<Vec<Table>>;
-
-//     /// 获取指定表的字段
-//     async fn columns(
-//         &self,
-//         pool: &Pool<Self::DB>,
-//         table_names: &[&str],
-//     ) -> anyhow::Result<Vec<Column>>;
-// }
-
 /// 驱动类型
-#[derive(Debug, Clone, Copy, Subcommand)]
+#[derive(Debug, Clone, Copy, Subcommand, Serialize)]
 pub enum Driver {
-    Sqlite,
     Mysql,
     Postgres,
+    Sqlite,
 }
 
 /// 代码生成器
-/// Driver::Sqlite      sqlite://test.sqlite
 /// Driver::Mysql       mysql://root:root@localhost:3306/test
-/// Driver::Postgres    postgres://root:root@localhost:5432/test
+/// Driver::Postgres    postgres://root:root@localhost:5432/test\
+/// Driver::Sqlite      sqlite://test.sqlite
 ///
 #[derive(Parser, Debug)]
 #[command(author, version, about,long_about = None)]
@@ -152,27 +134,6 @@ impl Generator {
         }
     }
 
-    // pub async fn db<DB>(&self) -> anyhow::Result<Box<Pool<DB>>>
-    // where
-    //     DB: sqlx::Database,
-    // {
-    //     match self.driver {
-    //         Driver::Sqlite => Ok(Box::new(
-    //             sqlx::SqlitePool::connect(&self.driver_url()).await?,
-    //         )),
-    //         Driver::Mysql => Ok(Box::new(
-    //             sqlx::MySqlPool::connect(&self.driver_url()).await?,
-    //         )),
-    //         Driver::Postgres => Ok(Box::new(sqlx::PgPool::connect(&self.driver_url()).await?)),
-    //     }
-    // }
-
-    pub async fn run(&mut self) -> anyhow::Result<()> {
-        self.deal_path();
-        self.generator().await?;
-        Ok(())
-    }
-
     ///  处理路径，当路径不以 / 结尾时，自动添加 /
     fn deal_path(&mut self) {
         if !self.path.is_empty() && !self.path.ends_with('/') {
@@ -180,56 +141,13 @@ impl Generator {
         }
     }
 
-    /// 生成器
-    ///
-    /// ```text
-    /// path: 指定生成路径
-    /// table_names: 指定生成的表明，为空则生成全部
-    /// ```
-    pub async fn generator(&self) -> anyhow::Result<()> {
+    pub async fn run(&mut self) -> anyhow::Result<()> {
+        self.deal_path();
+
         println!("{self}");
         println!("====== start ======");
 
-        // let db = self.db().await?;
-
-        // TODO 什么是 trait object?
-        // let tobj: &dyn Database<DB = dyn sqlx::Database> = {
-        //     match self.driver {
-        //         Driver::Sqlite => &sqlite::Sqlite,
-        //         Driver::Mysql => &mysql::Mysql,
-        //         Driver::Postgres => &postgres::Postgres,
-        //     }
-        // };
-
-        let table_names = self
-            .table_names
-            .split(',')
-            .filter(|t| !t.is_empty())
-            .collect::<Vec<_>>();
-
-        // let tables = tobj.tables(&db, &table_names).await?;
-        // let tables_columns = tobj.columns(&db, &table_names).await?;
-
-        let (tables, tables_columns) = match self.driver {
-            Driver::Sqlite => {
-                let pool = sqlx::SqlitePool::connect(&self.driver_url()).await?;
-                let tables = sqlite::tables(&pool, &table_names).await?;
-                let tables_columns = sqlite::columns(&pool, &table_names).await?;
-                (tables, tables_columns)
-            }
-            Driver::Mysql => {
-                let pool = sqlx::MySqlPool::connect(&self.driver_url()).await?;
-                let tables = mysql::tables(&pool, &table_names).await?;
-                let tables_columns = mysql::columns(&pool, &table_names).await?;
-                (tables, tables_columns)
-            }
-            Driver::Postgres => {
-                let pool = sqlx::PgPool::connect(&self.driver_url()).await?;
-                let tables = postgres::tables(&self.database, &pool, &table_names).await?;
-                let tables_columns = postgres::columns(&self.database, &pool, &table_names).await?;
-                (tables, tables_columns)
-            }
-        };
+        let (tables, tables_columns) = self.prepare().await?;
         if tables.is_empty() {
             println!("tables is empty");
             return Ok(());
@@ -239,7 +157,46 @@ impl Generator {
             println!("table columns is empty");
             return Ok(());
         }
+        self.write(tables, tables_columns).await?;
 
+        println!("====== over ======");
+        Ok(())
+    }
+
+    pub async fn prepare(&self) -> anyhow::Result<(Vec<Table>, Vec<Column>)> {
+        let table_names = self
+            .table_names
+            .split(',')
+            .filter(|t| !t.is_empty())
+            .collect::<Vec<_>>();
+
+        match self.driver {
+            Driver::Sqlite => {
+                let pool = sqlx::SqlitePool::connect(&self.driver_url()).await?;
+                let tables = sqlite::tables(&pool, &table_names).await?;
+                let tables_columns = sqlite::columns(&pool, &table_names).await?;
+                Ok((tables, tables_columns))
+            }
+            Driver::Mysql => {
+                let pool = sqlx::MySqlPool::connect(&self.driver_url()).await?;
+                let tables = mysql::tables(&pool, &table_names).await?;
+                let tables_columns = mysql::columns(&pool, &table_names).await?;
+                Ok((tables, tables_columns))
+            }
+            Driver::Postgres => {
+                let pool = sqlx::PgPool::connect(&self.driver_url()).await?;
+                let tables = postgres::tables(&self.database, &pool, &table_names).await?;
+                let tables_columns = postgres::columns(&self.database, &pool, &table_names).await?;
+                Ok((tables, tables_columns))
+            }
+        }
+    }
+
+    pub async fn write(
+        &self,
+        tables: Vec<Table>,
+        tables_columns: Vec<Column>,
+    ) -> anyhow::Result<()> {
         // 将tables转换为map，K：表名，V：表信息
         let table_map: HashMap<String, Table> =
             tables.into_iter().map(|t| (t.name.to_owned(), t)).collect();
@@ -266,11 +223,15 @@ impl Generator {
         fs::create_dir_all(&self.path)?;
 
         // 创建模板引擎
+        let mut ctx = tera::Context::new();
+        ctx.insert("driver", &self.driver);
+        ctx.insert("driver_url", &self.driver_url());
+        ctx.insert("table_names", &table_map);
         let mut tera = tera::Tera::default();
-        table_map.iter().for_each(|(table_name, table)| {
+
+        for (table_name, table) in table_map.iter() {
             let column = table_column_map.get(&table_name);
             // 创建上下文
-            let mut ctx = tera::Context::new();
             ctx.insert("struct_name", &table_name.to_upper_camel_case());
             ctx.insert("table", &table);
             let mut has_columns = false;
@@ -289,28 +250,29 @@ impl Generator {
             }
             ctx.insert("has_columns", &has_columns);
 
-            // 渲染模板
-            let render_string = tera.render_str(MODEL_TEMPLATE, &ctx).expect("渲染模板错误");
-            // 创建文件
-            let file_name = format!("{}{}.rs", self.path, &table_name);
-            let mut tf = fs::File::create(&file_name).expect("创建文件失败");
-            tf.write_all(render_string.as_bytes())
-                .expect("写入数据错误");
-
-            println!("the {} has been generated", &file_name);
-        });
-
-        let mut ctx = tera::Context::new();
-        ctx.insert("table_names", &table_map);
-        let render_string = tera.render_str(MOD_TEMPLATE, &ctx)?;
+            let contents = tera.render_str(MODEL_TEMPLATE, &ctx).expect("渲染模板错误");
+            Self::write_file(&format!("{}{}.rs", self.path, &table_name), &contents).await?;
+        }
 
         // 创建 mod.rs 文件
-        let mod_file_name = format!("{}mod.rs", self.path);
-        let mut tf = fs::File::create(&mod_file_name).expect("创建文件失败");
-        tf.write_all(render_string.as_bytes())?;
+        let contents = tera.render_str(MOD_TEMPLATE, &ctx)?;
+        Self::write_file(&format!("{}mod.rs", self.path), &contents).await?;
 
-        println!("the {} has been generated", &mod_file_name);
-        println!("====== over ======");
+        // 创建 error.rs 文件
+        let contents = tera.render_str(ERROR_TEMPLATE, &ctx)?;
+        Self::write_file(&format!("{}error.rs", self.path), &contents).await?;
+
+        // 创建 result.rs 文件
+        let contents = tera.render_str(RESULT_TEMPLATE, &ctx)?;
+        Self::write_file(&format!("{}result.rs", self.path), &contents).await?;
+
+        Ok(())
+    }
+
+    async fn write_file(path: &str, contents: &str) -> anyhow::Result<()> {
+        let mut tf = fs::File::create(path).expect("创建文件失败");
+        tf.write_all(contents.as_bytes())?;
+        println!("the {} has been generated", &path);
         Ok(())
     }
 }
