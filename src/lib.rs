@@ -81,17 +81,17 @@ pub struct Generator {
     #[command(subcommand)]
     pub driver: Driver,
     /// 数据库账号
-    #[clap(short)]
+    #[clap(short, default_value = "")]
     pub username: String,
     /// 数据库密码
-    #[clap(short)]
+    #[clap(short, default_value = "")]
     pub password: String,
     /// 数据库地址
-    #[clap(short('H'))]
+    #[clap(short('H'), default_value = "")]
     pub host: String,
     /// 数据库端口号
-    #[clap(short('P'))]
-    pub port: u16,
+    #[clap(short('P'), default_value = "")]
+    pub port: String,
     /// 指定的数据库名称
     #[clap(short('D'))]
     pub database: String,
