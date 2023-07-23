@@ -11,6 +11,9 @@ regex = "1.8.4"
 serde = { version = "1.0.164", features = ["derive"] }
 tera = "1.19.0"
 tokio = { version = "1.28.2", features = ["full"] }
-sqlx = { version = "0.6.3", features = ["runtime-tokio-native-tls", "mysql"] }
+sqlx = { version = "0.6.3", features = [
+    "runtime-tokio-native-tls",
+    "all-databases",
+] }
 heck = "0.4.1"
 anyhow = "1.0.72"

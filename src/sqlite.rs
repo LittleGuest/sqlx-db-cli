@@ -5,77 +5,118 @@ use sqlx::{FromRow, Pool};
 
 pub struct Sqlite;
 
-#[async_trait]
-impl super::Database for Sqlite {
-    async fn tables(
-        &self,
-        pool: &Pool<sqlx::mysql::MySql>,
-        table_names: &[&str],
-    ) -> anyhow::Result<Vec<super::Table>> {
-        let mut sql = r#"
-    SELECT type, name, tbl_name, rootpage, sql
-    FROM sqlite_master
-    WHERE type = 'table'
-        "#
-        .to_string();
+// #[async_trait]
+// impl super::Database for Sqlite {
+//     type DB = sqlx::Sqlite;
 
-        if !table_names.is_empty() {
-            sql.push_str("AND (1 = 2");
-            table_names
-                .iter()
-                .map(|&t| format!("OR name = '{t}'"))
-                .collect::<Vec<_>>()
-                .join(" ");
+//     async fn tables(
+//         &self,
+//         pool: &Pool<Self::DB>,
+//         table_names: &[&str],
+//     ) -> anyhow::Result<Vec<super::Table>> {
+//         let mut sql =
+//             "SELECT type, name, tbl_name, rootpage, sql FROM sqlite_master WHERE type = 'table'"
+//                 .to_string();
 
-            sql.push_str(&format!(
-                "AND FIND_IN_SET(TABLE_NAME, {})",
-                table_names.join(",")
-            ));
-            sql.push(')');
-        }
-        sql.push_str("ORDER by rootpage;");
+//         if !table_names.is_empty() {
+//             let table_names = table_names
+//                 .iter()
+//                 .map(|&t| format!("'{t}'"))
+//                 .collect::<Vec<_>>()
+//                 .join(",");
+//             sql.push_str(&format!(" AND name in({table_names}) "));
+//         }
 
-        Ok(sqlx::query_as::<_, Table>(&sql)
-            .fetch_all(pool)
-            .await?
-            .into_iter()
-            .map(|t| t.into())
-            .collect::<Vec<_>>())
+//         Ok(sqlx::query_as::<_, Table>(&sql)
+//             .fetch_all(pool)
+//             .await?
+//             .into_iter()
+//             .map(|t| t.into())
+//             .collect::<Vec<_>>())
+//     }
+//     async fn columns(
+//         &self,
+//         pool: &Pool<Self::DB>,
+//         table_names: &[&str],
+//     ) -> anyhow::Result<Vec<super::Column>> {
+//         let sql = "pragma table_info('#{table_names}');";
+
+//         let mut cols = vec![];
+//         for table_name in table_names.iter() {
+//             let columns = sqlx::query_as::<_, TableColumn>(sql)
+//                 .fetch_all(pool)
+//                 .await?;
+
+//             let mut columns = columns
+//                 .iter()
+//                 .map(|c| c.into())
+//                 .collect::<Vec<super::Column>>()
+//                 .iter_mut()
+//                 .map(|c| {
+//                     c.table_name = Some(table_name.to_string());
+//                     c.to_owned()
+//                 })
+//                 .collect::<Vec<_>>();
+//             cols.append(&mut columns);
+//         }
+//         Ok(cols)
+//     }
+// }
+
+pub async fn tables(
+    pool: &Pool<sqlx::Sqlite>,
+    table_names: &[&str],
+) -> anyhow::Result<Vec<super::Table>> {
+    let mut sql =
+        "SELECT type, name, tbl_name, rootpage, sql FROM sqlite_master WHERE type = 'table'"
+            .to_string();
+
+    if !table_names.is_empty() {
+        let table_names = table_names
+            .iter()
+            .map(|&t| format!("'{t}'"))
+            .collect::<Vec<_>>()
+            .join(",");
+        sql.push_str(&format!(" AND name in({table_names}) "));
     }
-    async fn columns(
-        &self,
-        pool: &Pool<sqlx::mysql::MySql>,
-        table_names: &[&str],
-    ) -> anyhow::Result<Vec<super::TableColumn>> {
-        let sql = "pragma table_info('#{table_names}');";
 
-        let mut cols = vec![];
-        for table_name in table_names.iter() {
-            let columns = sqlx::query_as::<_, TableColumn>(sql)
+    Ok(sqlx::query_as::<_, Table>(&sql)
+        .fetch_all(pool)
+        .await?
+        .into_iter()
+        .map(|t| t.into())
+        .collect::<Vec<_>>())
+}
+
+pub async fn columns(
+    pool: &Pool<sqlx::Sqlite>,
+    table_names: &[&str],
+) -> anyhow::Result<Vec<super::Column>> {
+    let mut cols = vec![];
+    for table_name in table_names.iter() {
+        let columns =
+            sqlx::query_as::<_, TableColumn>(&format!("pragma table_info('{}');", table_name))
                 .fetch_all(pool)
                 .await?;
 
-            println!("== {:?}", columns);
-            let mut columns = columns
-                .iter()
-                .map(|c| c.into())
-                .collect::<Vec<super::TableColumn>>()
-                .iter_mut()
-                .map(|c| {
-                    c.table_name = Some(table_name.to_string());
-                    c.to_owned()
-                })
-                .collect::<Vec<_>>();
-            cols.append(&mut columns);
-        }
-        Ok(cols)
+        let mut columns = columns
+            .iter()
+            .map(|c| c.into())
+            .collect::<Vec<super::Column>>()
+            .iter_mut()
+            .map(|c| {
+                c.table_name = Some(table_name.to_string());
+                c.to_owned()
+            })
+            .collect::<Vec<_>>();
+        cols.append(&mut columns);
     }
+    Ok(cols)
 }
 
 /// 表信息来自 sqlite_master
 #[derive(Default, Debug, Serialize, Deserialize, FromRow)]
-#[serde(rename_all(deserialize = "SCREAMING_SNAKE_CASE"))]
-pub struct Table {
+struct Table {
     /// 项目的类型：table，index，view，trigger
     r#type: Option<String>,
     /// 项目的名称
@@ -90,12 +131,11 @@ pub struct Table {
 
 /// 表列信息
 #[derive(Default, Debug, Serialize, Deserialize, FromRow)]
-#[serde(rename_all(deserialize = "SCREAMING_SNAKE_CASE"))]
-pub struct TableColumn {
+struct TableColumn {
     /// 列ID
-    cid: Option<u64>,
+    cid: Option<u32>,
     /// 列名
-    name: Option<String>,
+    name: String,
     /// 类型：如：varchar(50)  int
     r#type: Option<String>,
     /// 是否为空：1-不为空，0-为空
@@ -114,45 +154,11 @@ impl From<Table> for super::Table {
     }
 }
 
-impl From<&Table> for super::Table {
-    fn from(t: &Table) -> Self {
-        Self {
-            name: t.name.clone(),
-            ..Default::default()
-        }
-    }
-}
-
-impl From<TableColumn> for super::TableColumn {
-    fn from(col: TableColumn) -> Self {
-        let ty = sqlite_type(col.r#type.clone().unwrap().as_str());
-        Self {
-            name: Some(super::column_keywords(col.name.clone().unwrap().as_str())),
-            default: col.dflt_value,
-            is_nullable: {
-                if let Some(is_null) = col.notnull {
-                    if is_null == 1 {
-                        Some("NotNull".to_string())
-                    } else {
-                        Some("Null".to_string())
-                    }
-                } else {
-                    None
-                }
-            },
-            column_type: col.r#type.clone(),
-            field_type: Some(sqlite_to_rust(ty.0.as_str()).into()),
-            multi_world: Some(super::multi_world(col.name.unwrap().as_str())),
-            ..Default::default()
-        }
-    }
-}
-
-impl From<&TableColumn> for super::TableColumn {
+impl From<&TableColumn> for super::Column {
     fn from(col: &TableColumn) -> Self {
         let ty = sqlite_type(col.r#type.clone().unwrap().as_str());
         Self {
-            name: Some(super::column_keywords(col.name.clone().unwrap().as_str())),
+            name: Some(super::column_keywords(col.name.clone().as_str())),
             default: col.dflt_value.clone(),
             is_nullable: {
                 if let Some(is_null) = col.notnull {
@@ -167,9 +173,9 @@ impl From<&TableColumn> for super::TableColumn {
             },
             column_type: col.r#type.clone(),
             field_type: Some(sqlite_to_rust(ty.0.as_str()).into()),
-            multi_world: Some(super::multi_world(col.name.clone().unwrap().as_str())),
+            multi_world: Some(super::multi_world(col.name.clone().as_str())),
             max_length: Some(255),
-            comment: col.name.clone(),
+            comment: Some(col.name.clone()),
             ..Default::default()
         }
     }

@@ -103,7 +103,7 @@ pub struct {{ struct_name }} { {% if has_columns %}{% for column in columns %}
 
 impl std::fmt::Display for {{ struct_name }} {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        writeln!(f, "{}", serde_json::json!(self))
+        write!(f, "{}", serde_json::json!(self))
     }
 }
 

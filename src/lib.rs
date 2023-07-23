@@ -16,7 +16,7 @@ use clap::{Parser, Subcommand};
 use heck::ToUpperCamelCase;
 use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
-use sqlx::{MySql, Pool};
+use sqlx::{Any, MySql, Pool};
 use template::{MODEL_TEMPLATE, MOD_TEMPLATE};
 
 mod mysql;
@@ -39,7 +39,6 @@ lazy_static! {
 }
 
 #[derive(Serialize, Deserialize, Default, Debug)]
-// #[serde(rename_all(deserialize = "SCREAMING_SNAKE_CASE"))]
 pub struct Table {
     pub schema: Option<String>,
     pub name: Option<String>,
@@ -47,8 +46,7 @@ pub struct Table {
 }
 
 #[derive(Serialize, Deserialize, Default, Debug, Clone)]
-// #[serde(rename_all(deserialize = "SCREAMING_SNAKE_CASE"))]
-pub struct TableColumn {
+pub struct Column {
     pub schema: Option<String>,
     pub table_name: Option<String>,
     pub name: Option<String>,
@@ -63,21 +61,23 @@ pub struct TableColumn {
     pub multi_world: Option<bool>,
 }
 
-#[async_trait]
-pub trait Database {
-    /// 获取指定表信息
-    async fn tables(
-        &self,
-        pool: &Pool<sqlx::mysql::MySql>,
-        table_names: &[&str],
-    ) -> anyhow::Result<Vec<Table>>;
-    /// 获取指定表的字段
-    async fn columns(
-        &self,
-        pool: &Pool<sqlx::mysql::MySql>,
-        table_names: &[&str],
-    ) -> anyhow::Result<Vec<TableColumn>>;
-}
+// #[async_trait]
+// pub trait Database {
+//     type DB: sqlx::Database;
+//     /// 获取指定表信息
+//     async fn tables(
+//         &self,
+//         pool: &Pool<Self::DB>,
+//         table_names: &[&str],
+//     ) -> anyhow::Result<Vec<Table>>;
+
+//     /// 获取指定表的字段
+//     async fn columns(
+//         &self,
+//         pool: &Pool<Self::DB>,
+//         table_names: &[&str],
+//     ) -> anyhow::Result<Vec<Column>>;
+// }
 
 /// 驱动类型
 #[derive(Debug, Clone, Copy, Subcommand)]
@@ -122,15 +122,11 @@ impl Display for Generator {
         write!(
             f,
             r#"
-            driver_url: mysql://{}:{}@{}:{}/{}
+            driver_url: {}
             path: {}
             table_names: {}
            "#,
-            self.username,
-            self.password,
-            self.host,
-            self.port,
-            self.database,
+            self.driver_url(),
             self.path,
             self.table_names
         )
@@ -152,9 +148,20 @@ impl Generator {
         }
     }
 
-    pub async fn db(&self) -> anyhow::Result<Pool<MySql>> {
-        Ok(sqlx::MySqlPool::connect(&self.driver_url()).await?)
-    }
+    // pub async fn db<DB>(&self) -> anyhow::Result<Box<Pool<DB>>>
+    // where
+    //     DB: sqlx::Database,
+    // {
+    //     match self.driver {
+    //         Driver::Sqlite => Ok(Box::new(
+    //             sqlx::SqlitePool::connect(&self.driver_url()).await?,
+    //         )),
+    //         Driver::Mysql => Ok(Box::new(
+    //             sqlx::MySqlPool::connect(&self.driver_url()).await?,
+    //         )),
+    //         Driver::Postgres => Ok(Box::new(sqlx::PgPool::connect(&self.driver_url()).await?)),
+    //     }
+    // }
 
     pub async fn run(&mut self) -> anyhow::Result<()> {
         self.deal_path();
@@ -179,16 +186,16 @@ impl Generator {
         println!("{self}");
         println!("====== start ======");
 
-        let db = self.db().await?;
+        // let db = self.db().await?;
 
         // TODO 什么是 trait object?
-        let tobj: &dyn Database = {
-            match self.driver {
-                Driver::Sqlite => &sqlite::Sqlite,
-                Driver::Mysql => &mysql::Mysql,
-                Driver::Postgres => &postgres::Postgres,
-            }
-        };
+        // let tobj: &dyn Database<DB = dyn sqlx::Database> = {
+        //     match self.driver {
+        //         Driver::Sqlite => &sqlite::Sqlite,
+        //         Driver::Mysql => &mysql::Mysql,
+        //         Driver::Postgres => &postgres::Postgres,
+        //     }
+        // };
 
         let table_names = self
             .table_names
@@ -196,14 +203,36 @@ impl Generator {
             .filter(|t| !t.is_empty())
             .collect::<Vec<_>>();
 
-        let tables = tobj.tables(&db, &table_names).await?;
+        // let tables = tobj.tables(&db, &table_names).await?;
+        // let tables_columns = tobj.columns(&db, &table_names).await?;
+
+        let (tables, tables_columns) = match self.driver {
+            Driver::Sqlite => {
+                let pool = sqlx::SqlitePool::connect(&self.driver_url()).await?;
+                let tables = sqlite::tables(&pool, &table_names).await?;
+                let tables_columns = sqlite::columns(&pool, &table_names).await?;
+                (tables, tables_columns)
+            }
+            Driver::Mysql => {
+                let pool = sqlx::MySqlPool::connect(&self.driver_url()).await?;
+                let tables = mysql::tables(&pool, &table_names).await?;
+                let tables_columns = mysql::columns(&pool, &table_names).await?;
+                (tables, tables_columns)
+            }
+            Driver::Postgres => {
+                let pool = sqlx::PgPool::connect(&self.driver_url()).await?;
+                let tables = postgres::tables(&pool, &table_names).await?;
+                let tables_columns = postgres::columns(&pool, &table_names).await?;
+                (tables, tables_columns)
+            }
+        };
         if tables.is_empty() {
             println!("tables is empty");
             return Ok(());
         }
 
-        let tables_columns = tobj.columns(&db, &table_names).await?;
         if tables_columns.is_empty() {
+            println!("table columns is empty");
             return Ok(());
         }
 
