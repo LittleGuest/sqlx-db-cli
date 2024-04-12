@@ -171,7 +171,7 @@ SELECT
 	col.ordinal_position,
 	col.column_default,
 	col.is_nullable,
-	col.data_type,
+	col.udt_name as data_type,
 	col.character_maximum_length,
 	d.description 
 FROM
