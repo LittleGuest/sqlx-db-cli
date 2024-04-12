@@ -50,17 +50,13 @@ impl From<&TableColumn> for super::Column {
             default: col.dflt_value.clone(),
             is_nullable: {
                 if let Some(is_null) = col.notnull {
-                    if is_null == 1 {
-                        Some("NotNull".to_string())
-                    } else {
-                        Some("Null".to_string())
-                    }
+                    is_null != 1
                 } else {
-                    None
+                    true
                 }
             },
             column_type: col.r#type.clone(),
-            field_type: Some(t2t(ty.0.as_str()).into()),
+            field_type: t2t(ty.0.as_str()).into(),
             multi_world: Some(super::multi_world(col.name.clone().as_str())),
             max_length: Some(255),
             comment: Some(col.name.clone()),

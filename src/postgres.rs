@@ -43,14 +43,14 @@ impl From<TableColumn> for super::Column {
             default: c.column_default.clone(),
             is_nullable: {
                 if ty.contains("Time") {
-                    Some("Yes".to_string())
+                    true
                 } else {
-                    Some(c.is_nullable)
+                    c.is_nullable.eq_ignore_ascii_case("yes")
                 }
             },
             column_type: Some(c.data_type),
             comment: c.description,
-            field_type: Some(ty),
+            field_type: ty,
             multi_world: Some(c.column_name.clone().contains(|c| c == '_' || c == '-')),
             max_length: {
                 if let Some(l) = c.character_maximum_length {

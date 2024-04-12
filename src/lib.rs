@@ -52,12 +52,12 @@ pub struct Column {
     pub name: Option<String>,
     pub default: Option<String>,
     pub max_length: Option<i64>,
-    pub is_nullable: Option<String>,
+    pub is_nullable: bool,
     pub column_type: Option<String>,
     pub comment: Option<String>,
 
     // 对应 Rust 类型
-    pub field_type: Option<String>,
+    pub field_type: String,
     pub multi_world: Option<bool>,
 }
 
