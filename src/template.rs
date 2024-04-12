@@ -165,7 +165,6 @@ use crate::{error::Error, result::Result};
 )]
 #[serde(rename_all(serialize = "camelCase"))]
 pub struct {{ struct_name }} { {% if has_columns %}{% for column in columns %}
-    /// {{column.is_nullable}}
     /// {{column.comment}}
     {%if column.field_type == "String" -%}#[validate(length(max = {{column.max_length}}))]{%- endif%}
     pub {{column.name}}: {%if column.is_nullable %}Option<{{column.field_type}}>{% else %}{{column.field_type}}{% endif %},{% endfor %}{% endif %}
