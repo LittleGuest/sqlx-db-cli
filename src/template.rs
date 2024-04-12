@@ -3,7 +3,7 @@ pub const ERROR_TEMPLATE: &str = r#"
 //! 全局异常
 
 #[derive(Debug, thiserror::Error)]
-pub enum MineError {
+pub enum Error {
     #[error("{0}")]
     E(String),
     #[error("序列化错误")]
@@ -36,9 +36,9 @@ pub enum MineError {
 
 /// result.rs
 pub const RESULT_TEMPLATE: &str = r#"
-use crate::error::MineError;
+use crate::error::Error;
 
-pub type MineResult<T, E = MineError> = std::result::Result<T, E>;
+pub type Result<T, E = Error> = std::result::Result<T, E>;
 "#;
 
 /// mod.rs 文件模板
@@ -146,7 +146,7 @@ use sqlx::FromRow;
 use validator::Validate;
 
 use super::DB;
-use crate::{error::MineError, result::MineResult};
+use crate::{error::Error, result::Result};
 
 /// {{table.comment}}
 #[derive(
@@ -185,7 +185,7 @@ impl {{ struct_name }} {
         "{{ column_names }}".to_string()
     }
 
-    pub async fn fetch_by_id(id: u64) -> MineResult<Self> {
+    pub async fn fetch_by_id(id: u64) -> Result<Self> {
         let sql = format!(
             "select {} from {} where id = ?",
             Self::columns(),
@@ -197,11 +197,11 @@ impl {{ struct_name }} {
             .await
             .map_err(|e| {
                 log::error!("{e}");
-                MineError::SqlError
+                Error::SqlError
             })
     }
 
-    pub async fn fetch_all(req: &{{ struct_name }}Req) -> MineResult<Vec<Self>> {
+    pub async fn fetch_all(req: &{{ struct_name }}Req) -> Result<Vec<Self>> {
         let mut sql = format!("select {} from {}", Self::columns(), Self::table_name());
 
         let mut where_sql = " WHERE 1=1 ".to_string();
@@ -223,11 +223,11 @@ impl {{ struct_name }} {
             .await
             .map_err(|e| {
                 log::error!("{e}");
-                MineError::SqlError
+                Error::SqlError
             })
     }
 
-    pub async fn insert(&mut self) -> MineResult<Self> {
+    pub async fn insert(&mut self) -> Result<Self> {
         let sql = format!(
             "INSERT INTO {} ({}) VALUES({})",
             Self::table_name(),
@@ -242,13 +242,13 @@ impl {{ struct_name }} {
             .await
             .map_err(|e| {
                 log::error!("{e}");
-                MineError::SqlError
+                Error::SqlError
             })?
             .last_insert_id();
         Self::fetch_by_id(id).await
     }
 
-    pub async fn update(&mut self) -> MineResult<bool> {
+    pub async fn update(&mut self) -> Result<bool> {
         let sql = format!(
             "UPDATE {} set account = ?, set {} where id = ?",
             Self::table_name(),
@@ -263,12 +263,12 @@ impl {{ struct_name }} {
             .await
             .map_err(|e| {
                 log::error!("{e}");
-                MineError::SqlError
+                Error::SqlError
             })
             .map(|r| r.rows_affected() > 0)
     }
 
-    pub async fn delete(&self) -> MineResult<bool> {
+    pub async fn delete(&self) -> Result<bool> {
         let sql = format!("DELETE FROM {} WHERE id = ?", Self::table_name());
         sqlx::query(&sql)
             .bind(self.id)
@@ -276,12 +276,12 @@ impl {{ struct_name }} {
             .await
             .map_err(|e| {
                 log::error!("{e}");
-                MineError::SqlError
+                Error::SqlError
             })
             .map(|r| r.rows_affected() > 0)
     }
 
-    async fn count(where_sql: &str) -> MineResult<(i64,)> {
+    async fn count(where_sql: &str) -> Result<(i64,)> {
         let count_sql = format!(
             "SELECT count(*) FROM {} WHERE {}",
             Self::table_name(),
@@ -293,11 +293,11 @@ impl {{ struct_name }} {
             .await
             .map_err(|e| {
                 log::error!("{e}");
-                MineError::SqlError
+                Error::SqlError
             })
     }
 
-    pub async fn page(req: &{{ struct_name }}Req) -> MineResult<super::PageRes<Self>> {
+    pub async fn page(req: &{{ struct_name }}Req) -> Result<super::PageRes<Self>> {
         let mut where_sql = " 1 = 1 ".to_string();
         {% if has_columns %}{% for column in columns %}
         if let Some({{column.name}}) = &req.{{column.name}} {
@@ -332,7 +332,7 @@ impl {{ struct_name }} {
                     .await
                     .map_err(|e| {
                         log::error!("{e}");
-                        MineError::SqlError
+                        Error::SqlError
                     })?
             }
             false => Vec::new(),

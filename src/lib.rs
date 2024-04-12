@@ -71,7 +71,9 @@ pub enum Driver {
 
 /// 代码生成器
 /// Driver::Mysql       mysql://root:root@localhost:3306/test
-/// Driver::Postgres    postgres://root:root@localhost:5432/test\
+///
+/// Driver::Postgres    postgres://root:root@localhost:5432/test
+///
 /// Driver::Sqlite      sqlite://test.sqlite
 ///
 #[derive(Parser, Debug)]

@@ -6,6 +6,7 @@ struct Table {
     table_catalog: String,
     table_schema: String,
     table_name: String,
+    description: Option<String>,
 }
 
 #[derive(Default, Debug, Serialize, Deserialize, FromRow)]
@@ -19,6 +20,7 @@ struct TableColumn {
     is_nullable: String,
     data_type: String,
     character_maximum_length: Option<i32>,
+    description: Option<String>,
 }
 
 impl From<Table> for super::Table {
@@ -26,7 +28,7 @@ impl From<Table> for super::Table {
         Self {
             schema: t.table_schema,
             name: t.table_name.clone(),
-            comment: t.table_name,
+            comment: t.description.unwrap_or(t.table_name),
         }
     }
 }
@@ -47,7 +49,7 @@ impl From<TableColumn> for super::Column {
                 }
             },
             column_type: Some(c.data_type),
-            comment: Some("".to_string()),
+            comment: c.description,
             field_type: Some(ty),
             multi_world: Some(c.column_name.clone().contains(|c| c == '_' || c == '-')),
             max_length: {
@@ -137,10 +139,13 @@ pub async fn tables(
     pool: &Pool<sqlx::Postgres>,
     table_names: &[&str],
 ) -> anyhow::Result<Vec<super::Table>> {
-    let mut sql = format!("SELECT table_catalog, table_schema, table_name FROM information_schema.tables WHERE table_catalog = '{database}' and table_schema = 'public'");
+    let mut sql = format!("SELECT tb.table_catalog, tb.table_schema, tb.TABLE_NAME, d.description FROM information_schema.tables tb JOIN pg_class C ON C.relname = tb. TABLE_NAME LEFT JOIN pg_description d ON d.objoid = C.OID  AND d.objsubid = '0' WHERE tb.table_catalog = '{database}' and tb.table_schema = 'public' ");
 
     if !table_names.is_empty() {
-        sql.push_str(&format!("and table_name in ('{}')", table_names.join(",")));
+        sql.push_str(&format!(
+            "and tb.table_name in ('{}')",
+            table_names.join(",")
+        ));
     }
 
     Ok(sqlx::query_as::<_, Table>(&sql)
@@ -156,11 +161,42 @@ pub async fn columns(
     pool: &Pool<sqlx::Postgres>,
     table_names: &[&str],
 ) -> anyhow::Result<Vec<super::Column>> {
-    let mut sql = format!("select table_catalog, table_schema, table_name, column_name, ordinal_position, column_default, is_nullable, data_type, character_maximum_length from information_schema.columns where table_catalog = '{database}' and table_schema = 'public'");
+    let mut sql = format!(
+        "
+SELECT
+	col.table_catalog,
+	col.table_schema,
+	col.TABLE_NAME,
+	col.COLUMN_NAME,
+	col.ordinal_position,
+	col.column_default,
+	col.is_nullable,
+	col.data_type,
+	col.character_maximum_length,
+	d.description 
+FROM
+	information_schema.COLUMNS col
+	JOIN pg_class C ON C.relname = col.
+	TABLE_NAME LEFT JOIN pg_description d ON d.objoid = C.OID 
+	AND d.objsubid = col.ordinal_position 
+WHERE
+	col.table_catalog = '{database}' 
+	AND col.table_schema = 'public' 
+"
+    );
 
     if !table_names.is_empty() {
-        sql.push_str(&format!("and table_name in ('{}')", table_names.join(",")));
+        sql.push_str(&format!(
+            " and col.table_name in ('{}')",
+            table_names.join(",")
+        ));
     }
+
+    sql.push_str(
+        " ORDER BY
+	col.TABLE_NAME,
+	col.ordinal_position;",
+    );
 
     Ok(sqlx::query_as::<_, TableColumn>(&sql)
         .fetch_all(pool)
